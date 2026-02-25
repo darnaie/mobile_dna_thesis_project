@@ -1,295 +1,189 @@
+#!/usr/bin/env python3
 import os
 
 GENOME_DIR = "/net/bq-storage/ag-khedkar/Sofia/project_folder/genome_seqs"
 DUP_FILE = "/net/bq-storage/ag-khedkar/Sofia/project_folder/mge_seqs_deduplicated/deduplicated.fasta.duplicates.txt"
-OUT_FASTA = "duplicates_with_flanks_200bp.fasta"
+FLANK_DIR = "/net/bq-storage/ag-khedkar/Sofia/project_folder/flanks"
+MGES_DIR = "/net/bq-storage/ag-khedkar/Sofia/project_folder/mges"
 
-FLANK = 200
+LEFT_FLANK_LEN = 200
+RIGHT_FLANK_LEN = 200
+EXTRACT_FLANK = 200
+MIN_GROUP_SIZE = 100
+
+os.makedirs(FLANK_DIR, exist_ok=True)
+os.makedirs(MGES_DIR, exist_ok=True)
 
 # ---------- helpers ----------
 
 def revcomp(seq):
-    """
-    Return the reverse complement of a DNA sequence.
-
-    Parameters
-    ----------
-    seq : str
-        DNA sequence containing A, C, G, T, N (case-insensitive).
-
-    Returns
-    -------
-    str
-        Reverse-complemented sequence with original case preserved.
-
-    Notes
-    -----
-    Uses translation table for nucleotide complement and reverses string.
-    """
     comp = str.maketrans("ACGTNacgtn", "TGCANtgcan")
     return seq.translate(comp)[::-1]
 
 
 def parse_entry(entry):
-    """
-    Example entry:
-    MGE_GCA_900083375.1_1280.SAMEA2445630.FKXQ01000003:261901-264243
-
-    After removing first 3 underscore blocks:
-    1280.SAMEA2445630.FKXQ01000003:261901-264243
-
-    Extract contig identifier and genomic coordinates from entry string.
-
-    Parameters
-    ----------
-    entry : str
-        Duplicate entry identifier, possibly prefixed with '+' or '-'.
-
-    Returns
-    -------
-    tuple (str, int, int)
-        contig : full contig ID matching FASTA header
-        start  : start coordinate (int)
-        end    : end coordinate (int)
-
-    Notes
-    -----
-    Removes orientation symbol if present.
-    Assumes format where locus and coordinates are separated by ':'.
-    """
-    entry = entry.lstrip("+-")
-
-    core = entry.split("_", 3)[3]
-    locus, coords = core.split(":")
-
-    contig = locus  # full contig ID exactly as in FASTA
-    start, end = map(int, coords.split("-"))
-
-    return contig, start, end
+    e = entry.lstrip("+-")
+    parts = e.split("_", 3)
+    if len(parts) < 4:
+        raise ValueError(f"Unexpected entry format: {entry}")
+    core = parts[3]
+    locus, coords = core.split(":", 1)
+    start_s, end_s = coords.split("-", 1)
+    return locus, int(start_s), int(end_s)
 
 
 def genome_filename(entry):
-    """
-    From:
-    1280.SAMEA2445630.FKXQ01000003
-    -> 1280.SAMEA2445630.fasta
-
-    Generate genome FASTA filename from entry identifier.
-
-    Parameters
-    ----------
-    entry : str
-        Duplicate entry identifier with optional orientation prefix.
-
-    Returns
-    -------
-    str
-        Genome FASTA filename corresponding to entry.
-
-    Notes
-    -----
-    Extracts first two dot-separated components of locus ID.
-    Used to locate genome file in GENOME_DIR.
-    """
-    entry = entry.lstrip("+-")
-    core = entry.split("_", 3)[3]
-    locus = core.split(":")[0]
-
-    parts = locus.split(".")
-    prefix = ".".join(parts[:2])
-
+    e = entry.lstrip("+-")
+    parts = e.split("_", 3)
+    if len(parts) < 4:
+        return None
+    locus = parts[3].split(":", 1)[0]
+    p = locus.split(".")
+    prefix = ".".join(p[:2]) if len(p) >= 2 else locus
     return f"{prefix}.fasta"
 
 
 def load_genome(path):
-    """
-    Load a multi-FASTA genome file into memory.
-
-    Parameters
-    ----------
-    path : str
-        Path to FASTA file.
-
-    Returns
-    -------
-    dict
-        Dictionary mapping contig name -> full sequence string.
-
-    Notes
-    -----
-    FASTA headers are truncated at first whitespace.
-    Entire file is stored in memory.
-    """
     seqs = {}
     name = None
-    seq = []
-
+    buf = []
     with open(path) as f:
         for line in f:
             if line.startswith(">"):
                 if name:
-                    seqs[name] = "".join(seq)
+                    seqs[name] = "".join(buf)
                 name = line[1:].split()[0]
-                seq = []
+                buf = []
             else:
-                seq.append(line.strip())
-
+                buf.append(line.strip())
         if name:
-            seqs[name] = "".join(seq)
-
+            seqs[name] = "".join(buf)
     return seqs
-    
 
-def fetch_region_from_fasta(fasta_path, target_contig, start, end, flank):
-    """
-    Extract a genomic region with flanking bases directly from FASTA file.
-
-    Parameters
-    ----------
-    fasta_path : str
-        Path to genome FASTA file.
-    target_contig : str
-        Contig identifier to extract from.
-    start : int
-        Region start coordinate.
-    end : int
-        Region end coordinate.
-    flank : int
-        Number of bases to include upstream and downstream.
-
-    Returns
-    -------
-    str
-        Extracted sequence region including flanks.
-        Returns empty string if contig not found or no overlap.
-
-    Notes
-    -----
-    Reads FASTA sequentially without loading full genome into memory.
-    Coordinates are treated as 0-based positions.
-    Stops reading once region end is passed.
-    """
-    start = max(0, start - flank)
-    end = end + flank
-
-    seq_chunks = []
-    current = None
-    pos = 0
-
-    with open(fasta_path) as f:
-        for line in f:
-            if line.startswith(">"):
-                current = line[1:].split()[0]
-                pos = 0
-                continue
-
-            if current != target_contig:
-                continue
-
-            line = line.strip()
-            line_len = len(line)
-
-            line_start = pos
-            line_end = pos + line_len
-
-            if line_end >= start and line_start <= end:
-                s = max(0, start - line_start)
-                e = min(line_len, end - line_start)
-                seq_chunks.append(line[s:e])
-
-            pos += line_len
-
-            if pos > end:
-                break
-
-    return "".join(seq_chunks)
-
-
-# ---------- read duplicate pairs ----------
-
-pairs = []
-with open(DUP_FILE) as f:
-    for line in f:
-        toks = line.strip().split()
-        if len(toks) != 2:
-            continue
-        ref, dup = toks
-        orientation = "+" if dup.startswith("+") else "-"
-        pairs.append((ref, dup, orientation))
-
-print("Pairs:", len(pairs))
-
-
-# ---------- genome cache ----------
-
-genome_cache = {}
 
 def get_genome(filename):
-    """
-    Retrieve genome from cache or load it if not already loaded.
-
-    Parameters
-    ----------
-    filename : str
-        Genome FASTA filename.
-
-    Returns
-    -------
-    dict or None
-        Dictionary of contig -> sequence if genome exists.
-        None if genome file not found.
-
-    Notes
-    -----
-    Uses global genome_cache to avoid repeated disk reads.
-    """
-    if filename not in genome_cache:
-        path = os.path.join(GENOME_DIR, filename)
-        if not os.path.exists(path):
-            return None
-        genome_cache[filename] = load_genome(path)
-    return genome_cache[filename]
+    if filename is None:
+        return None
+    path = os.path.join(GENOME_DIR, filename)
+    if not os.path.exists(path):
+        return None
+    return load_genome(path)
 
 
-# ---------- extraction ----------
+def fetch_region_from_genome(genome_dict, contig, start, end, flank):
+    if genome_dict is None:
+        return ""
+    seq = genome_dict.get(contig)
+    if seq is None:
+        return ""
+    left1 = max(1, start - flank)
+    right1 = end + flank
+    s0 = left1 - 1
+    e0 = min(len(seq), right1)
+    return seq[s0:e0]
 
-written = 0
-missing_genome = 0
-missing_contig = 0
 
-with open(OUT_FASTA, "w") as out:
+# ---------- master FASTA streams ----------
 
-    for ref, dup, orientation in pairs:
+master_left_path = os.path.join(FLANK_DIR, "master_left.fasta")
+master_right_path = os.path.join(FLANK_DIR, "master_right.fasta")
+master_mges_path = os.path.join(MGES_DIR, "master_mges.fasta")
 
-        contig1, s1, e1 = parse_entry(ref)
-        contig2, s2, e2 = parse_entry(dup)
+ml = open(master_left_path, "w")
+mr = open(master_right_path, "w")
+mm = open(master_mges_path, "w")
 
-        genome1 = os.path.join(GENOME_DIR, genome_filename(ref))
-        genome2 = os.path.join(GENOME_DIR, genome_filename(dup))
+# ---------- processing ----------
 
-        if not os.path.exists(genome1) or not os.path.exists(genome2):
-            missing_genome += 1
+filtered_dup_path = os.path.join(FLANK_DIR, f"duplicates_min{MIN_GROUP_SIZE}.txt")
+
+group_i = 0
+total_written = 0
+missing_genomes = 0
+missing_contigs = 0
+bad_entries = 0
+
+with open(DUP_FILE) as inf, open(filtered_dup_path, "w") as outf:
+    for line in inf:
+        toks = line.strip().split()
+        if len(toks) < MIN_GROUP_SIZE:
             continue
 
-        region1 = fetch_region_from_fasta(genome1, contig1, s1, e1, FLANK)
-        region2 = fetch_region_from_fasta(genome2, contig2, s2, e2, FLANK)
+        outf.write(line)
 
-        if not region1 or not region2:
-            missing_contig += 1
-            continue
+        group_i += 1
+        group_name = f"dup_group_{group_i:05d}"
 
-        if orientation == "-":
-            region2 = revcomp(region2)
+        left_path = os.path.join(FLANK_DIR, f"{group_name}_left.fasta")
+        right_path = os.path.join(FLANK_DIR, f"{group_name}_right.fasta")
+        mges_path = os.path.join(MGES_DIR, f"{group_name}_mges.fasta")
 
-        id1 = ref.replace(":", "_")
-        id2 = dup.lstrip("+-").replace(":", "_")
+        with open(left_path, "w") as left_fh, \
+             open(right_path, "w") as right_fh, \
+             open(mges_path, "w") as mge_fh:
 
-        out.write(f">{id1}\n{region1}\n")
-        out.write(f">{id2}\n{region2}\n")
+            for entry in toks:
+                try:
+                    contig, s, e = parse_entry(entry)
+                except Exception:
+                    bad_entries += 1
+                    continue
 
-        written += 2
+                genome = get_genome(genome_filename(entry))
+                if genome is None:
+                    missing_genomes += 1
+                    continue
 
-print("Sequences written:", written)
-print("Pairs missing genome:", missing_genome)
-print("Pairs missing contig:", missing_contig)
-print("Done.")
+                region = fetch_region_from_genome(genome, contig, s, e, EXTRACT_FLANK)
+                if not region:
+                    missing_contigs += 1
+                    continue
+
+                seq_full = genome.get(contig, "")
+                if not seq_full:
+                    missing_contigs += 1
+                    continue
+
+                mge_seq = seq_full[s-1:e]
+
+                if entry.startswith("-"):
+                    region = revcomp(region)
+                    mge_seq = revcomp(mge_seq)
+
+                idbase = entry.lstrip("+-").replace(":", "_")
+                left_seq = region[:LEFT_FLANK_LEN]
+                right_seq = region[-RIGHT_FLANK_LEN:] if len(region) >= 1 else ""
+
+                left_name = f"{idbase}_left"
+                right_name = f"{idbase}_right"
+                mge_name = f"{idbase}_mge"
+
+                # write group files
+                left_fh.write(f">{left_name}\n{left_seq}\n")
+                right_fh.write(f">{right_name}\n{right_seq}\n")
+                mge_fh.write(f">{mge_name}\n{mge_seq}\n")
+
+                # write master files immediately
+                ml.write(f">{left_name}\n{left_seq}\n")
+                mr.write(f">{right_name}\n{right_seq}\n")
+                mm.write(f">{mge_name}\n{mge_seq}\n")
+
+                total_written += 3
+
+ml.close()
+mr.close()
+mm.close()
+
+# ---------- summary ----------
+
+print(f"Filtered duplicates written: {filtered_dup_path}")
+print(f"Groups processed: {group_i}")
+print(f"Sequences written (left+right+mge): {total_written}")
+print(f"Bad entries: {bad_entries}")
+print(f"Missing genome files: {missing_genomes}")
+print(f"Missing contigs: {missing_contigs}")
+print("Flanks saved in", FLANK_DIR)
+print("MGEs saved in", MGES_DIR)
+print("Master left:", master_left_path)
+print("Master right:", master_right_path)
+print("Master mges:", master_mges_path)
