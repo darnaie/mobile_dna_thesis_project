@@ -1,0 +1,37 @@
+# requirements.txt
+#
+# Built by grepping every top-level import across all 29 pipeline scripts
+# and utils.py (not guessed) -- see the comment above each package for
+# which script(s) actually need it.
+#
+# This lists PACKAGE NAMES only, not pinned versions -- I don't have your
+# actual working environment to read exact version numbers from. Before
+# committing this, run the following inside your own working venv and use
+# ITS output instead, since it will have the exact versions you actually
+# tested with:
+#
+#     pip freeze | grep -iE "pyyaml|numpy|matplotlib|graphviz|torch|captum|logomaker"
+#
+# or, more conservatively, just `pip freeze > requirements.txt` for a
+# fully exact snapshot of everything in that environment.
+
+PyYAML          # utils.py -- config.yaml loading (import yaml), used by every script
+numpy           # numerical work throughout Sections 2.6-2.7 (consensus scanning, ML)
+matplotlib      # histograms and plots: 2.3.3, 2.4.3, 2.7.5
+graphviz        # flowchart figures: 2.2.5, 2.3.3, 2.4.3 (also needs the system "dot"
+                # binary -- see README, this is the Python bindings only)
+torch           # 2.7.3 (train the boundary-motif CNN), 2.7.4 (cross-validation)
+captum          # 2.7.3/2.7.5 -- Integrated Gradients attribution
+
+# Optional -- only used for one specific plot (the PWM sequence-logo
+# figure in 2.7.5); the script checks for it and skips that one plot
+# with a warning if it's missing, so it's not a hard requirement:
+# logomaker
+
+# NOT pip packages -- separate binaries this pipeline calls via
+# subprocess, install these yourself and set their paths in config.yaml
+# (paths.skani_path / mmseqs2_path / vclust_path / mafft_path):
+#   skani     https://github.com/bluenote-1577/skani
+#   mmseqs2   https://github.com/soedinglab/MMseqs2
+#   vclust    https://github.com/refresh-bio/vclust
+#   mafft     https://mafft.cbrc.jp/alignment/software/

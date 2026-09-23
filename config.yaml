@@ -1,0 +1,468 @@
+# ==============================================================================
+# thesis_rep/config.yaml
+#
+# PLACEHOLDER mechanism: 
+#     placeholder: true / false
+#     path_to_output: <existing file OR directory to stage in as this
+#                       subsection's output instead of computing it>
+#
+# placeholder=true copies (files) or symlinks (directories, e.g. a genome
+# folder -- too large to duplicate) path_to_output into place and stops;
+# no real computation runs. placeholder=false ignores path_to_output
+# ("NA") and actually computes the output.
+#
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Paths — ONLY base_dir, progenomes3_dir, and the three external tool paths
+# live here. Every other directory (files/, logs/, plots/, slurm_logs/,
+# genome_seqs/, genome_seqs_div_by_speci/, genome_seqs_repr/) is DERIVED
+# from base_dir by utils.get_paths()
+# ------------------------------------------------------------------------------
+paths:
+  base_dir: ""   # "" -> defaults to the directory this config.yaml lives in
+  progenomes3_dir: "/net/bq-storage/ag-khedkar/khedkar/pg3_data/pg3_genomes/"
+
+  # Pre-installed, working tool binaries:
+  skani_path: "/net/bq-storage/ag-khedkar/Sofia/project_folder/skani"
+  mmseqs2_path: "/net/bq-storage/ag-khedkar/Sofia/project_folder/mmseqs/bin/mmseqs"
+  vclust_path: "/home/bq_slipaeva/.local/bin/vclust"
+  mafft_path: "/net/bq-storage/ag-khedkar/Sofia/project_folder/mafft"
+
+# ------------------------------------------------------------------------------
+# SLURM — optional, applies to every section script uniformly. When
+# use_slurm is true, a script re-invokes itself via `sbatch` (using
+# sbatch_header as the common boilerplate, plus any section-specific
+# resource lines from that section's own config block, e.g. Section 2.2.2's
+# slurm_cpus_per_task/slurm_mem_gb) and returns immediately; the actual
+# computation happens later, inside the submitted job. SLURM's own job
+# .out/.err logs land in BASE/slurm_logs, kept separate from BASE/logs
+# (this pipeline's own application-level logs, written regardless of
+# whether slurm is used).
+# ------------------------------------------------------------------------------
+slurm:
+  use_slurm: true
+  sbatch_header: |
+    #SBATCH --nodes=60
+    #SBATCH --ntasks=1
+    #SBATCH --cpus-per-task=60
+    
+
+# ==============================================================================
+# Section 2.1 = MGE aggregation, transposon isolation, and taxonomic assignment
+# No plotting in this section (see Section 2.2, which ends with one that
+# covers both sections' results together).
+# ==============================================================================
+section_2_1:
+  title: "MGE aggregation, transposon isolation, and taxonomic assignment"
+
+  # ----------------------------------------------------------------------------
+  # 2.1.1 -- BASE/scripts/extract_mges.py
+  # input : paths.progenomes3_dir
+  # output: BASE/files/master_mges.gff3, non_nested_is_tn.gff3,
+  #         non_nested_is_tn.fasta[.gz]
+  # ----------------------------------------------------------------------------
+  "2.1.1":
+    script: "extract_mges.py"
+    placeholder: false
+    path_to_output_master_mges: "NA"
+    path_to_output_non_nested_is_tn_gff: "NA"
+    path_to_output_non_nested_is_tn_fasta: "NA"
+    mge_type_filter: "is_tn"
+    gzip_fasta_output: false
+
+  # ----------------------------------------------------------------------------
+  # 2.1.2 -- BASE/scripts/recombinase_gff.py
+  # input : BASE/files/master_mges.gff3 (+ paths.progenomes3_dir)
+  # output: BASE/files/recomb.gff3 (master, any MGE type),
+  #         BASE/files/non_nested_is_tn_recombinase.gff3
+  # ----------------------------------------------------------------------------
+  "2.1.2":
+    script: "recombinase_gff.py"
+    placeholder: false
+    path_to_output_master_recomb_gff: "NA"
+    path_to_output_non_nested_gff_is_tn_gff: "NA"  
+
+  # ----------------------------------------------------------------------------
+  # 2.1.3 -- BASE/scripts/download_f13.py
+  # input : none
+  # output: BASE/files/f13_dataset.txt
+  # ----------------------------------------------------------------------------
+  "2.1.3":
+    script: "download_f13.py"
+    placeholder: false
+    path_to_output: "NA"
+    download_url: "https://progenomes.embl.de/data/proGenomes3_specI_taxonomy.tsv.gz" ## ASK SUPRIYA AND CHANGE!!
+
+  # ----------------------------------------------------------------------------
+  # 2.1.4 -- BASE/scripts/download_genomes.py
+  # input : BASE/files/non_nested_is_tn.gff3
+  # output: BASE/genome_seqs/
+  # ----------------------------------------------------------------------------
+  "2.1.4":
+    script: "download_genomes.py"
+    placeholder: false
+    path_to_output: "NA"
+    base_url: "http://progenomes3.embl.de/dumpSequence.cgi"
+    wget_timeout_seconds: 120
+    manifest_file: "download_manifest.tsv"
+
+  # ----------------------------------------------------------------------------
+  # 2.1.5 -- BASE/scripts/recombinase_seq.py
+  # input : BASE/files/non_nested_is_tn_recombinase.gff3 (2.1.2),
+  #         BASE/genome_seqs/ (2.1.4)
+  # output: BASE/files/is_tn_recombinase_non_nested.fasta
+  # ----------------------------------------------------------------------------
+  "2.1.5":
+    script: "recombinase_seq.py"
+    placeholder: false
+    path_to_output: "NA"
+
+# ==============================================================================
+# Section 2.2 = Genome deduplication
+# ==============================================================================
+section_2_2:
+  title: "Genome deduplication"
+
+  # ----------------------------------------------------------------------------
+  # 2.2.1 -- BASE/scripts/divide_genomes_by_speci.py
+  # input : BASE/genome_seqs/ (2.1.4), BASE/files/f13_dataset.txt (2.1.3),
+  #         BASE/files/master_mges.gff3 (2.1.1, to relate genome filenames
+  #         to their GCA accession -- see script docstring)
+  # output: BASE/genome_seqs_div_by_speci/specI_vX_NNNNN/*.fasta
+  # ----------------------------------------------------------------------------
+  "2.2.1":
+    script: "divide_genomes_by_speci.py"
+    placeholder: false
+    path_to_output: "NA"
+
+  # ----------------------------------------------------------------------------
+  # 2.2.2 -- BASE/scripts/skani_dedup.py
+  # input : BASE/genome_seqs_div_by_speci/ (2.2.1)
+  # output: BASE/files/skani_output/*.tsv  (one per specI folder)
+  # ----------------------------------------------------------------------------
+  "2.2.2":
+    script: "skani_dedup.py"
+    placeholder: false
+    path_to_output: "NA"
+    slurm_cpus_per_task: 32
+    slurm_mem_gb: 40
+    max_parallel_species: 4     # how many specI folders to process at once
+    threads_per_species: 8      # (max_parallel_species * threads_per_species) <= slurm_cpus_per_task
+    use_custom_command: "no"
+    # {skani_bin} {species_dir} {threads} {output_tsv} are substituted in.
+    # Only used if use_custom_command is "yes"; otherwise this exact
+    # command is what's run anyway (this is the default, spelled out).
+    custom_command: "{skani_bin} triangle {species_dir}/*.fasta -t {threads} -E -s 0 --min-af 0 -o {output_tsv}"
+
+  # ----------------------------------------------------------------------------
+  # 2.2.3 -- BASE/scripts/pick_representatives.py
+  # input : BASE/files/skani_output/*.tsv (2.2.2)
+  # output: BASE/genome_seqs_repr/  (a directory)
+  # ----------------------------------------------------------------------------
+  "2.2.3":
+    script: "pick_representatives.py"
+    placeholder: false
+    path_to_output: "NA"
+    ani_threshold: 99.8
+    align_threshold: 90.0
+    slurm_cpus_per_task: 16
+
+  # ----------------------------------------------------------------------------
+  # 2.2.4 -- BASE/scripts/build_recombinase_table.py
+  # input : BASE/files/non_nested_is_tn.gff3 (2.1.1, MGE-island-level data),
+  #         BASE/files/non_nested_is_tn_recombinase.gff3 (2.1.2, recombinase
+  #         gene-level data), BASE/files/is_tn_recombinase_non_nested.fasta
+  #         (2.1.5, already-extracted sequences -- reused, NOT re-extracted
+  #         from raw genome FASTAs, hence "no .fasta read" of new data),
+  #         BASE/genome_seqs_repr/ (2.2.3, restricts the table to
+  #         representative/deduplicated genomes only)
+  # output: BASE/files/a_mge_recombinase_table.tsv,
+  #         BASE/files/is_tn_recombinase_non_nested_repr.fasta
+  # ----------------------------------------------------------------------------
+  "2.2.4":
+    script: "build_recombinase_table.py"
+    placeholder: false
+    path_to_output_a_rec_table: "NA"
+    path_to_output_is_tn_rec_fasta: "NA" 
+
+  # ----------------------------------------------------------------------------
+  # 2.2.5 -- BASE/scripts/plot_flowchart_section_2_2.py
+  # input : BASE/files/master_mges.gff3, non_nested_is_tn.gff3 (2.1.1),
+  #         BASE/files/f13_dataset.txt (2.1.3),
+  #         BASE/files/a_mge_recombinase_table.tsv (2.2.4)
+  # output: BASE/plots/flowchart_section_2_2.png
+  # ----------------------------------------------------------------------------
+  "2.2.5":
+    script: "plot_flowchart_section_2_2.py"
+    create_plot: "no"
+
+# ==============================================================================
+# Section 2.3 = Recombinase clustering
+# ==============================================================================
+section_2_3:
+  title: "Recombinase clustering"
+ 
+  # ----------------------------------------------------------------------------
+  # 2.3.1 -- BASE/scripts/cluster_recombinases.py
+  # input : BASE/files/is_tn_recombinase_non_nested_repr.fasta (2.2.4)
+  # output: BASE/files/recombinase_cluster_<ani_threshold>/recombinase_cluster_*
+  # ANI (--min-seq-id) and coverage are both user-chosen -- no fixed default.
+  # ----------------------------------------------------------------------------
+  "2.3.1":
+    script: "cluster_recombinases.py"
+    placeholder: false
+    path_to_output: "NA"
+    ani_threshold: 0.85
+    coverage: 0.85
+    cov_mode: 0
+    exact_kmer_matching: false   # only appropriate if ani_threshold = 1.0
+    slurm_cpus_per_task: 20
+    slurm_mem_gb: 8
+ 
+  # ----------------------------------------------------------------------------
+  # 2.3.2 -- BASE/scripts/append_clustering_info.py
+  # input : BASE/files/a_mge_recombinase_table.tsv (2.2.4),
+  #         BASE/files/recombinase_cluster_<ani>/recombinase_cluster_cluster.tsv (2.3.1),
+  #         BASE/files/f13_dataset.txt (2.1.3)
+  # output: BASE/files/b_mge_recombinase_table.tsv
+  # ----------------------------------------------------------------------------
+  "2.3.2":
+    script: "append_clustering_info.py"
+    placeholder: false
+    path_to_output: "NA"
+ 
+  # ----------------------------------------------------------------------------
+  # 2.3.3 -- BASE/scripts/plot_flowchart_section_2_3.py
+  # input : BASE/files/a_mge_recombinase_table.tsv, b_mge_recombinase_table.tsv,
+  #         BASE/files/f13_dataset.txt
+  # output: BASE/plots/flowchart_section_2_3.png + histogram
+  # ----------------------------------------------------------------------------
+  "2.3.3":
+    script: "plot_flowchart_section_2_3.py"
+    create_plot: "no"
+ 
+# ==============================================================================
+# Section 2.4 = Duplicate grouping
+# ==============================================================================
+section_2_4:
+  title: "Duplicate grouping"
+ 
+  # ----------------------------------------------------------------------------
+  # 2.4.1 -- BASE/scripts/vclust_dedup.py
+  # input : BASE/files/non_nested_is_tn.fasta (2.1.1)
+  # output: BASE/vclust_deduplication/
+  # ----------------------------------------------------------------------------
+  "2.4.1":
+    script: "vclust_dedup.py"
+    placeholder: false
+    path_to_output: "NA"
+    slurm_cpus_per_task: 20
+    slurm_mem_gb: 32
+    slurm_time: "22:30:00"
+    slurm_nodelist: null   # e.g. "cln132", or leave null to let SLURM pick
+    extra_shell_lines:
+      - "module purge"
+      - "module load compiler/gcc/10.2.0"
+      - "module load devel/python/3.10.0"
+      - "source ~/uv_env/bin/activate"
+ 
+  # ----------------------------------------------------------------------------
+  # 2.4.2 -- BASE/scripts/append_duplicate_info.py
+  # input : BASE/files/b_mge_recombinase_table.tsv (2.3.2),
+  #         BASE/vclust_deduplication/*.fasta.duplicates.txt (2.4.1)
+  # output: BASE/files/c_mge_recombinase_table.tsv
+  # ----------------------------------------------------------------------------
+  "2.4.2":
+    script: "append_duplicate_info.py"
+    placeholder: false
+    path_to_output: "NA" # BASE/files/c_mge_recombinase_table.tsv
+ 
+  # ----------------------------------------------------------------------------
+  # 2.4.3 -- BASE/scripts/plot_flowchart_section_2_4.py
+  # input : BASE/files/c_mge_recombinase_table.tsv,
+  #         BASE/vclust_deduplication/*.fasta.duplicates.txt
+  # output: BASE/plots/flowchart_section_2_4.png + 2 histograms
+  # ----------------------------------------------------------------------------
+  "2.4.3":
+    script: "plot_flowchart_section_2_4.py"
+    create_plot: "no"
+# ==============================================================================
+# Section 2.5 = Flank extraction
+# ==============================================================================
+section_2_5:
+  title: "Flank extraction"
+
+  # ----------------------------------------------------------------------------
+  # 2.5.1 -- BASE/scripts/2.5.1_extract_flanks.py
+  # input : BASE/files/non_nested_is_tn.gff3 (2.1.1),
+  #         BASE/genome_seqs_repr/ (2.2.3),
+  #         BASE/files/c_mge_recombinase_table.tsv (2.4.2 -- not an
+  #         explicit input you named, but required: it's the only place
+  #         each mge_id's rec_type/cluster/duplicate-group lives, which is
+  #         what decides where each MGE's flank pair gets filed),
+  #         BASE/vclust_deduplication/ (2.4.1)
+  # output: BASE/flanks_split_acc_to_duplicates/<rec_type>/cluster_<N>/
+  #         <duplicate_group_M | singleton>/<mge_id>_left.fasta, _right.fasta
+  #         BASE/is_tns_seqs, assumed to contain one FASTA per MGE named "<mge_id>.fasta"
+  # ----------------------------------------------------------------------------
+  "2.5.1":
+    script: "2.5.1_extract_flanks.py"
+    placeholder: false
+    path_to_output: "NA"
+    flank_size: 500
+    mge_overlap: 30
+    extract_is_tn_seqs: false
+    
+  # ----------------------------------------------------------------------------
+  # 2.5.2 -- BASE/scripts/2.5.2_append_flank_sequences.py
+  # input : BASE/files/c_mge_recombinase_table.tsv (2.4.2),
+  #         BASE/flanks_split_acc_to_duplicates/ (2.5.1)
+  # output: BASE/files/d_mge_recombinase_table.tsv
+  # (2x c_table's row count: every row split into a "left" row + a "right"
+  # row, each carrying its own flank_sequence)
+  # ----------------------------------------------------------------------------
+  "2.5.2":
+    script: "2.5.2_append_flank_sequences.py"
+    placeholder: false
+    path_to_output: "NA" # BASE/files/d_mge_recombinase_table.tsv
+
+# ==============================================================================
+# Section 2.6 = Consensus building
+# ==============================================================================
+section_2_6:
+  title: "Consensus building"
+
+  # ----------------------------------------------------------------------------
+  # 2.6.1 -- BASE/scripts/2.6.1_align_flanks.sh  (bash/sbatch, NOT Python)
+  # input : BASE/flanks_split_acc_to_duplicates/ (2.5.1)
+  # output: BASE/consensus/duplicate_group_level/  (stacking + alignment, per group)
+  #         BASE/consensus/cluster_level/          (stacking + alignment, per cluster)
+  # Settings below are for documentation/reference only -- this script
+  # doesn't read config.yaml. Edit the actual bash variables at the top of
+  # 2.6.1_align_flanks.sh directly.
+  # ----------------------------------------------------------------------------
+  "2.6.1":
+    script: "2.6.1_align_flanks.sh"
+    placeholder_reference_only: "BASE/consensus"
+  
+  # ----------------------------------------------------------------------------
+  # 2.6.2 -- BASE/scripts/2.6.2_consensus_sanity_check.py
+  # input : BASE/consensus/ (2.6.1) 
+  # output: BASE/consensus/sanity_check 
+  # ----------------------------------------------------------------------------
+  "2.6.2":
+    script: "2.6.2_consensus_sanity_check.py"
+
+  # ----------------------------------------------------------------------------
+  # 2.6.3 -- BASE/scripts/2.6.2_build_consensus.py
+  # input : BASE/consensus/cluster_level/ (2.6.1) -- CLUSTER LEVEL ONLY
+  # output: BASE/files/cluster_consensus_results.tsv (structured result for
+  #         2.6.3) + an extensive per-cluster log (NOT a strategy-comparison
+  #         table like consensus_building_evaluation.py's)
+  # ----------------------------------------------------------------------------
+  "2.6.3":
+    script: "2.6.3_build_consensus.py"
+    placeholder: false
+    path_to_output: "NA"  #BASE/files/cluster_consensus_results.tsv
+    consensus_source: "alignment"   # "stacking" | "alignment" | "both"
+    strategy: "A"                   # "A" (+run-length skipping) | "B" (single-column cutoff) -- stacking only
+    a_run_length: 2
+    trim_start: 30
+    use_dynamic_threshold: false
+    use_dynamic_nt_skipping: false
+    dynamic_threshold_and_nt_skipping_cutoff: 3     # n_sequences <= this -> dynamic_threshold_small
+    dynamic_threshold_small: 0.9
+    dynamic_threshold_large: 0.7
+    fixed_threshold: 1.0            # only used if use_dynamic_threshold: false
+    rec_types: "DDE_Tnp_IS1,DDE_Tnp_ISL3,DDE_Tnp_IS1595,DDE_Tnp_IS66,DDE_Tnp_Tn3,DDE_Tnp_ISAZ013"    # "all", or comma-separated e.g. "rve,c2_n1ser"
+
+  # ----------------------------------------------------------------------------
+  # 2.6.4 -- BASE/scripts/2.6.3_append_consensus.py
+  # input : BASE/files/d_mge_recombinase_table.tsv (2.5.2),
+  #         BASE/files/cluster_consensus_results.tsv (2.6.2)
+  # output: BASE/files/e_mge_recombinase_table.tsv
+  # ----------------------------------------------------------------------------
+  "2.6.4":
+    script: "2.6.4_append_consensus.py"
+    placeholder: false
+    path_to_output: "NA"
+
+section_2_7:
+  title: "Boundary-motif CNN"
+  # ----------------------------------------------------------------------------
+  # 2.7.1 -- BASE/scripts/2.7.1_annotate_ml_labels.py
+  # input : BASE/flanks_split_acc_to_duplicates/ (2.5.1), BASE/consensus/cluster_level/ (2.6.1)
+  # output: BASE/files/ml_labels.tsv
+  # ----------------------------------------------------------------------------
+  "2.7.1":
+    script: "2.7.1_annotate_ml_labels.py"
+    placeholder: false
+    path_to_output: "NA"
+    fixed_threshold: 1.0
+    a_run_length: 2
+    trim_start: 30
+    mge_overlap: 30
+    rec_types: "DDE_Tnp_IS1,DDE_Tnp_ISL3,DDE_Tnp_IS1595,DDE_Tnp_IS66,DDE_Tnp_Tn3,DDE_Tnp_ISAZ013,DEDD_Tnp_IS110"
+  # ----------------------------------------------------------------------------
+  # 2.7.2 -- BASE/scripts/2.7.2_split_dataset.py
+  # input : BASE/files/ml_labels.tsv
+  # output: BASE/files/ml_labels_split.tsv (adds both "split" and "fold" columns)
+  # ----------------------------------------------------------------------------
+  "2.7.2":
+    script: "2.7.2_split_dataset.py"
+    placeholder: false
+    path_to_output: "NA"
+    train_frac: 0.8
+    val_frac: 0.1
+    seed: 42
+    n_folds: 5
+    fold_seed: 42
+  # ----------------------------------------------------------------------------
+  # 2.7.3 -- BASE/scripts/2.7.3_train_evaluate_model.py
+  # input : BASE/files/ml_labels_split.tsv
+  # output: BASE/ml_model/best_model.pt, BASE/files/ml_test_predictions.tsv
+  # ----------------------------------------------------------------------------
+  "2.7.3":
+    script: "2.7.3_train_evaluate_model.py"
+    placeholder: false
+    path_to_output: "NA"
+    seq_length: 500
+    batch_size: 64
+    max_epochs: 100
+    early_stopping_patience: 10
+    learning_rate: 0.001
+    seed: 42
+    n_attribution_examples_per_rec_type: 5
+  # ----------------------------------------------------------------------------
+  # 2.7.4 -- BASE/scripts/2.7.4_kfold_cross_validation.py
+  # input : BASE/files/ml_labels_split.tsv (its "fold" column)
+  # output: BASE/ml_model/cv_fold_<k>/, BASE/files/ml_cv_results.tsv,
+  #         BASE/files/ml_cv_summary.tsv, BASE/plots/ml_cv_results.png/.pdf
+  # COST WARNING: trains n_folds full models sequentially -- see the
+  # script's own docstring before running this on the real dataset.
+  # ----------------------------------------------------------------------------
+  "2.7.4":
+    script: "2.7.4_kfold_cross_validation.py"
+    placeholder: false
+    path_to_output: "NA"
+    seq_length: 500
+    batch_size: 64
+    max_epochs: 100
+    early_stopping_patience: 10
+    learning_rate: 0.001
+    seed: 42
+    n_folds: 5
+  # ----------------------------------------------------------------------------
+  # 2.7.5 -- BASE/scripts/2.7.5_plot_ml_results.py
+  # input : BASE/ml_model/train_log.tsv, BASE/files/ml_test_predictions.tsv,
+  #         BASE/ml_model/attributions/, BASE/files/ml_labels_split.tsv
+  # output: BASE/plots/ml_*.png/.pdf (7 figures)
+  # ----------------------------------------------------------------------------
+  "2.7.5":
+    script: "2.7.5_plot_ml_results.py"
+    placeholder: false
+    path_to_output: "NA"
+    rec_types: "DDE_Tnp_IS1,DDE_Tnp_ISL3,DDE_Tnp_IS1595,DDE_Tnp_IS66,DDE_Tnp_Tn3,DDE_Tnp_ISAZ013,DEDD_Tnp_IS110"
+    seq_length: 500
+    pwm_window_len: 15
