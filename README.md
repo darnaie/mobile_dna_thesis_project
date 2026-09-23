@@ -54,14 +54,6 @@ python 2.1.1_extract_mges.py --config path/to/config.yaml
 
 If `slurm.use_slurm: true` in `config.yaml`, a step submits itself via `sbatch` and returns immediately rather than blocking -- `run_pipeline.py` does not wait for a submitted job to finish before starting the next step. If you're using SLURM, it's safer to run the pipeline in chunks via `--from`/`--to`, confirming each SLURM job has actually completed before starting the next chunk, rather than running the whole thing in one call.
 
-## Running TIR identification
-
-This one is separate from the rest, since it isn't part of `config.yaml`:
-```bash
-sbatch run_find_terminal_inverted_repeats.sh
-```
-Edit `SCRIPT_DIR`, `FLANKS_DIR`, `IS_TN_DIR`, and `OUT_TSV` near the top of that file to your own paths first. See the script's own docstring, or Methods Section 2.3 of the thesis, for what it does and how its thresholds were chosen.
-
 ## A note on file numbering
 
 The numbering of files in this repository (`2.1.1`, `2.6.3`, etc.) broadly follows the Methods sections of the thesis, but doesn't correspond to it one-to-one -- the thesis went through several rounds of editing after the code was written, and section numbers shifted in ways the filenames didn't always follow. This doesn't affect what any script does. As a rough map: files `2.1.x` through `2.7.x` correspond to Methods Sections 2.1, 2.2, and Results Sections 3.1-3.7 of the thesis; TIR identification (`find_terminal_inverted_repeats.py`) corresponds to Methods Section 2.3 and Results Section 3.8.
