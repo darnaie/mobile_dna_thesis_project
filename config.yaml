@@ -92,7 +92,7 @@ section_2_1:
     script: "download_f13.py"
     placeholder: false
     path_to_output: "NA"
-    download_url: "https://progenomes.embl.de/data/proGenomes3_specI_taxonomy.tsv.gz" ## ASK SUPRIYA AND CHANGE!!
+    download_url: "files/f13_staged_data_with_speci_and_tax.txt"
 
   # ----------------------------------------------------------------------------
   # 2.1.4 -- BASE/scripts/download_genomes.py
